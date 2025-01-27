@@ -1,94 +1,115 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
 use std::fmt::Debug;
 
-trait NamedAny: Any + Debug {
-    fn type_name(&self) -> &'static str;
+trait DebugAny {
     fn as_any(&self) -> &dyn Any;
-    fn print_value(&self);
+    fn format_value(&self) -> String;
 }
 
-impl<T: Any + Debug> NamedAny for T {
-    fn type_name(&self) -> &'static str {
-        std::any::type_name::<T>()
-    }
-
+impl<T: Any + Debug> DebugAny for T {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn print_value(&self) {
-        println!("{:?}", self);
+    fn format_value(&self) -> String {
+        format!("{:?}", &self)
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct TypeKey {
-    type_id: TypeId,
-    counter_id: usize,
-}
-
-impl TypeKey {
-    fn new(type_id: TypeId, counter_id: usize) -> TypeKey {
-        TypeKey { type_id, counter_id }
-    }
-}
-
-impl Hash for TypeKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.type_id.hash(state);
-        self.counter_id.hash(state);
-    }
-}
-
-#[derive(Debug)]
 struct DataSeries {
-    data: HashMap<TypeKey, Box<dyn NamedAny>>,
-    order: Vec<TypeKey>,
-    last_counter_id: usize,
+    data: HashMap<usize, Box<dyn DebugAny>>,
+    order: Vec<usize>,
+    last_order_id: usize,
 }
 
 impl DataSeries {
-    fn new() -> DataSeries {
+    pub fn new() -> DataSeries {
         DataSeries {
             data: HashMap::new(),
             order: Vec::new(),
-            last_counter_id: 0,
+            last_order_id: 0,
         }
     }
 
-    fn push<T: 'static + Debug>(&mut self, value: T) {
-        let key = TypeKey::new(
-            TypeId::of::<T>(),
-            self.last_counter_id,
-        );
-        self.order.push(key);
-        self.data.insert(key, Box::new(value));
-        self.last_counter_id += 1;
+    fn push<T: Any + Debug>(&mut self, value: T) {
+        self.order.push(self.last_order_id);
+        self.data.insert(self.last_order_id, Box::new(value));
+        self.last_order_id += 1;
     }
 
-    fn print_all(&self) {
-        for key in &self.order {
+    fn get<T: Any + Debug>(&self, index: usize) -> Option<&T> {
+        if let Some(key) = self.order.get(index) {
             if let Some(value) = self.data.get(key) {
-                value.print_value();
+                return value.as_any().downcast_ref::<T>();
+            }
+        } 
+        None
+    }
+
+    fn pop(&mut self, index: usize) -> Option<Box<(dyn DebugAny + 'static)>> {
+        if let Some(key) = self.order.get(index) {
+            let _ = self.order.remove(index);
+            return self.data.remove(&index);
+        }
+        None
+    }
+
+    fn print(&self) {
+        for key in self.order.iter() {
+            if let Some(value) = self.data.get(key) {
+                println!("{}", value.format_value());
             }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
+mod test {
     use super::*;
 
     #[test]
-    fn new_hvec() {
-        let mut series = DataSeries::new();
-        series.push(1);
-        series.push(vec!["a", "b", "c"]);
-        series.push([4.32, 1.79]);
-        series.push(5);
+    fn new_data_series() {
+        let series = DataSeries::new();
 
-        series.print_all();
+        assert_eq!(series.data.len(), 0);
+        assert_eq!(series.order.len(), 0);
+        assert_eq!(series.last_order_id, 0);
+    }
+
+    #[test]
+    fn push_item_to_series() {
+        let mut series = DataSeries::new();
+
+        series.push(1);
+
+        assert_eq!(series.data.len(), 1);
+        assert_eq!(series.order.len(), 1);
+        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.get::<i32>(0), Some(&1));
+        assert_eq!(series.get::<&str>(0), None);
+    }
+
+    #[test]
+    fn delete_item_from_series() {
+        let mut series = DataSeries::new();
+
+        series.push(1);
+        series.push("test");
+        series.push([1.2, 3.4]);
+
+        assert_eq!(series.data.len(), 3);
+        assert_eq!(series.order.len(), 3);
+        assert_eq!(series.last_order_id, 3);
+
+        let popped_value = series.pop(1);
+        assert!(popped_value.is_some());
+        assert_eq!(*popped_value.unwrap().as_any().downcast_ref::<&str>().unwrap(), "test");
+
+        assert_eq!(series.data.len(), 2);
+        assert_eq!(series.order.len(), 2);
+        assert_eq!(series.last_order_id, 3);
+        assert_eq!(series.get::<&str>(1), None);
+        assert_eq!(series.get::<[f64; 2]>(1), Some(&[1.2, 3.4]));
     }
 }
