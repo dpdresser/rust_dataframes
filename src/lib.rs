@@ -4,11 +4,16 @@ use std::fmt::Debug;
 
 trait DebugAny {
     fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
     fn format_value(&self) -> String;
 }
 
 impl<T: Any + Debug> DebugAny for T {
     fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
 
@@ -47,7 +52,25 @@ impl DataSeries {
         None
     }
 
-    fn pop(&mut self, index: usize) -> Option<Box<(dyn DebugAny + 'static)>> {
+    fn get_mut<T: Any + Debug>(&mut self, index: usize) -> Option<&mut T> {
+        if let Some(key) = self.order.get(index) {
+            if let Some(value) = self.data.get_mut(key) {
+                return value.as_any_mut().downcast_mut::<T>();
+            }
+        }
+        None
+    }
+
+    fn update<T: Any + Debug>(&mut self, index: usize, new_value: T) {
+        if let Some(key) = self.order.get(index) {
+            if let Some(value) = self.data.get_mut(key) {
+                let mut_ref = value.as_any_mut().downcast_mut::<T>().unwrap();
+                *mut_ref = new_value;
+            }
+        }
+    }
+
+    fn remove(&mut self, index: usize) -> Option<Box<(dyn DebugAny + 'static)>> {
         if let Some(key) = self.order.get(index) {
             let _ = self.order.remove(index);
             return self.data.remove(&index);
@@ -102,14 +125,56 @@ mod test {
         assert_eq!(series.order.len(), 3);
         assert_eq!(series.last_order_id, 3);
 
-        let popped_value = series.pop(1);
-        assert!(popped_value.is_some());
-        assert_eq!(*popped_value.unwrap().as_any().downcast_ref::<&str>().unwrap(), "test");
+        let removed_value = series.remove(1);
+        assert!(removed_value.is_some());
+        assert_eq!(*removed_value.unwrap().as_any().downcast_ref::<&str>().unwrap(), "test");
 
         assert_eq!(series.data.len(), 2);
         assert_eq!(series.order.len(), 2);
         assert_eq!(series.last_order_id, 3);
         assert_eq!(series.get::<&str>(1), None);
         assert_eq!(series.get::<[f64; 2]>(1), Some(&[1.2, 3.4]));
+    }
+
+    #[test]
+    fn get_mut_series_value() {
+        let mut series = DataSeries::new();
+
+        series.push(1);
+
+        assert_eq!(series.data.len(), 1);
+        assert_eq!(series.order.len(), 1);
+        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.get::<i32>(0), Some(&1));
+
+        let mut_ref = series.get_mut(0);
+
+        assert!(mut_ref.is_some());
+
+        *mut_ref.unwrap() = 100;
+
+        assert_eq!(series.data.len(), 1);
+        assert_eq!(series.order.len(), 1);
+        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.get::<i32>(0), Some(&100));
+    }
+
+    #[test]
+    fn update_item_in_series() {
+        let mut series = DataSeries::new();
+
+        series.push(1);
+
+        assert_eq!(series.data.len(), 1);
+        assert_eq!(series.order.len(), 1);
+        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.get::<i32>(0), Some(&1));
+
+        series.update::<i32>(0, 100);
+
+        assert_eq!(series.data.len(), 1);
+        assert_eq!(series.order.len(), 1);
+        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.get::<i32>(0), Some(&100));
     }
 }
