@@ -48,7 +48,7 @@ impl DataSeries {
             if let Some(value) = self.data.get(key) {
                 return value.as_any().downcast_ref::<T>();
             }
-        } 
+        }
         None
     }
 
@@ -71,9 +71,14 @@ impl DataSeries {
     }
 
     fn remove(&mut self, index: usize) -> Option<Box<(dyn DebugAny + 'static)>> {
-        if let Some(key) = self.order.get(index) {
+        if index < self.data.len() {
+            let removed = if let Some(key) = self.order.get(index) {
+                self.data.remove(key)
+            } else {
+                None
+            };
             let _ = self.order.remove(index);
-            return self.data.remove(&index);
+            return removed;
         }
         None
     }
@@ -127,7 +132,14 @@ mod test {
 
         let removed_value = series.remove(1);
         assert!(removed_value.is_some());
-        assert_eq!(*removed_value.unwrap().as_any().downcast_ref::<&str>().unwrap(), "test");
+        assert_eq!(
+            *removed_value
+                .unwrap()
+                .as_any()
+                .downcast_ref::<&str>()
+                .unwrap(),
+            "test"
+        );
 
         assert_eq!(series.data.len(), 2);
         assert_eq!(series.order.len(), 2);
