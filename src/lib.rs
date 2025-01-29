@@ -24,27 +24,30 @@ impl<T: Any + Debug> DebugAny for T {
 
 struct DataSeries {
     data: HashMap<usize, Box<dyn DebugAny>>,
-    order: Vec<usize>,
-    last_order_id: usize,
+    type_map: HashMap<usize, String>,
+    index: Vec<usize>,
+    last_index_id: usize,
 }
 
 impl DataSeries {
     pub fn new() -> DataSeries {
         DataSeries {
             data: HashMap::new(),
-            order: Vec::new(),
-            last_order_id: 0,
+            type_map: HashMap::new(),
+            index: Vec::new(),
+            last_index_id: 0,
         }
     }
 
     fn push<T: Any + Debug>(&mut self, value: T) {
-        self.order.push(self.last_order_id);
-        self.data.insert(self.last_order_id, Box::new(value));
-        self.last_order_id += 1;
+        self.index.push(self.last_index_id);
+        self.data.insert(self.last_index_id, Box::new(value));
+        self.type_map.insert(self.last_index_id, std::any::type_name::<T>().to_string());
+        self.last_index_id += 1;
     }
 
     fn get<T: Any + Debug>(&self, index: usize) -> Option<&T> {
-        if let Some(key) = self.order.get(index) {
+        if let Some(key) = self.index.get(index) {
             if let Some(value) = self.data.get(key) {
                 return value.as_any().downcast_ref::<T>();
             }
@@ -53,7 +56,7 @@ impl DataSeries {
     }
 
     fn get_mut<T: Any + Debug>(&mut self, index: usize) -> Option<&mut T> {
-        if let Some(key) = self.order.get(index) {
+        if let Some(key) = self.index.get(index) {
             if let Some(value) = self.data.get_mut(key) {
                 return value.as_any_mut().downcast_mut::<T>();
             }
@@ -62,31 +65,38 @@ impl DataSeries {
     }
 
     fn update<T: Any + Debug>(&mut self, index: usize, new_value: T) {
-        if let Some(key) = self.order.get(index) {
+        if let Some(key) = self.index.get(index) {
             if let Some(value) = self.data.get_mut(key) {
                 let mut_ref = value.as_any_mut().downcast_mut::<T>().unwrap();
                 *mut_ref = new_value;
+            }
+
+            if let Some(value) = self.type_map.get_mut(key) {
+                *value = std::any::type_name::<T>().to_string();
             }
         }
     }
 
     fn remove(&mut self, index: usize) -> Option<Box<(dyn DebugAny + 'static)>> {
         if index < self.data.len() {
-            let removed = if let Some(key) = self.order.get(index) {
+            let removed = if let Some(key) = self.index.get(index) {
+                let _ = self.type_map.remove(key);
                 self.data.remove(key)
             } else {
                 None
             };
-            let _ = self.order.remove(index);
+            let _ = self.index.remove(index);
             return removed;
         }
         None
     }
 
     fn print(&self) {
-        for key in self.order.iter() {
+        for (i, key) in self.index.iter().enumerate() {
             if let Some(value) = self.data.get(key) {
-                println!("{}", value.format_value());
+                if let Some(value_type) = self.type_map.get (key) {
+                    println!("{}  {}: {}", i, value_type, value.format_value());
+                }
             }
         }
     }
@@ -101,8 +111,8 @@ mod test {
         let series = DataSeries::new();
 
         assert_eq!(series.data.len(), 0);
-        assert_eq!(series.order.len(), 0);
-        assert_eq!(series.last_order_id, 0);
+        assert_eq!(series.index.len(), 0);
+        assert_eq!(series.last_index_id, 0);
     }
 
     #[test]
@@ -112,8 +122,8 @@ mod test {
         series.push(1);
 
         assert_eq!(series.data.len(), 1);
-        assert_eq!(series.order.len(), 1);
-        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.index.len(), 1);
+        assert_eq!(series.last_index_id, 1);
         assert_eq!(series.get::<i32>(0), Some(&1));
         assert_eq!(series.get::<&str>(0), None);
     }
@@ -127,8 +137,8 @@ mod test {
         series.push([1.2, 3.4]);
 
         assert_eq!(series.data.len(), 3);
-        assert_eq!(series.order.len(), 3);
-        assert_eq!(series.last_order_id, 3);
+        assert_eq!(series.index.len(), 3);
+        assert_eq!(series.last_index_id, 3);
 
         let removed_value = series.remove(1);
         assert!(removed_value.is_some());
@@ -142,10 +152,16 @@ mod test {
         );
 
         assert_eq!(series.data.len(), 2);
-        assert_eq!(series.order.len(), 2);
-        assert_eq!(series.last_order_id, 3);
+        assert_eq!(series.index.len(), 2);
+        assert_eq!(series.last_index_id, 3);
         assert_eq!(series.get::<&str>(1), None);
         assert_eq!(series.get::<[f64; 2]>(1), Some(&[1.2, 3.4]));
+
+        series.push("test");
+        assert_eq!(series.data.len(), 3);
+        assert_eq!(series.index.len(), 3);
+        assert_eq!(series.last_index_id, 4);
+        assert_eq!(series.get::<&str>(2), Some(&"test"));
     }
 
     #[test]
@@ -155,8 +171,8 @@ mod test {
         series.push(1);
 
         assert_eq!(series.data.len(), 1);
-        assert_eq!(series.order.len(), 1);
-        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.index.len(), 1);
+        assert_eq!(series.last_index_id, 1);
         assert_eq!(series.get::<i32>(0), Some(&1));
 
         let mut_ref = series.get_mut(0);
@@ -166,8 +182,8 @@ mod test {
         *mut_ref.unwrap() = 100;
 
         assert_eq!(series.data.len(), 1);
-        assert_eq!(series.order.len(), 1);
-        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.index.len(), 1);
+        assert_eq!(series.last_index_id, 1);
         assert_eq!(series.get::<i32>(0), Some(&100));
     }
 
@@ -178,15 +194,30 @@ mod test {
         series.push(1);
 
         assert_eq!(series.data.len(), 1);
-        assert_eq!(series.order.len(), 1);
-        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.index.len(), 1);
+        assert_eq!(series.last_index_id, 1);
         assert_eq!(series.get::<i32>(0), Some(&1));
 
         series.update::<i32>(0, 100);
 
         assert_eq!(series.data.len(), 1);
-        assert_eq!(series.order.len(), 1);
-        assert_eq!(series.last_order_id, 1);
+        assert_eq!(series.index.len(), 1);
+        assert_eq!(series.last_index_id, 1);
         assert_eq!(series.get::<i32>(0), Some(&100));
+    }
+
+    #[ignore]
+    #[test]
+    fn print_test() {
+        let mut series = DataSeries::new();
+
+        series.push(1);
+        series.push("test");
+        series.push([1.2, 3.4]);
+        series.push(vec![1, 3, 4, 5, 12, 30, 12]);
+
+        series.print();
+
+        println!("\n{:?}\n", series.get::<Vec<i32>>(3).unwrap());
     }
 }
